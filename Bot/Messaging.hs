@@ -4,8 +4,10 @@ where
 
 import Data.List
 import Data.List.Utils
+import Data.Acid
 
 import Control.Monad.RWS hiding (join)
+import Control.Applicative
 
 import System.IO
 
@@ -19,7 +21,7 @@ import Bot.Commands.Rand
 import Bot.Commands.Time
 import Bot.Commands.URL
 
-pairs =
+commands =
     (
         [
             (s' . clean, substmsg), -- Substitute
@@ -54,23 +56,25 @@ pairs =
 --
 -- Process each line from the server
 --
-listen :: Handle -> Net ()
-listen h = forever $
-    -- Get a line from buffer managed by Handle h
-    init `fmap` io (hGetLine h) >>=
+-- listen :: Handle -> Net ()
+listen acidStack h = forever $ do
+    -- io :: IO a -> Net a
+    -- io = liftIO
+    s  <- init <$> io (hGetLine h)
+    io $ putStrLn s
 
-    (\s ->
-        -- Output line to stdout for logging
-        (io $ putStrLn s) >>
-        -- Get current system time
-        io nowtime >>=
-        -- Get message stack
-        \now -> get >>=
+    now   <- io nowtime
+    stack <- get
 
-        (\stack ->
-            -- Save message in stack
-            (put $ filter (isChan . snd) [(now, s)] ++ take 200 stack) >>
-            -- Process line
-            helper s stack pairs
-        )
-    )
+    if isChan s then do
+        let msg = (now, s)
+        put $ take 200 $ msg : stack
+        io  $ update acidStack (AddMessage msg)
+        process s stack
+    else
+        process s stack
+
+    where
+        process s stack = head $
+            [f s stack | (c, f) <- fst commands, c s] ++
+            [f s       | (c, f) <- snd commands, c s]
